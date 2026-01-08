@@ -139,6 +139,14 @@ class ThumbnailGenerator:
         target_w, target_h = TARGET_SIZE
         target_ratio = target_w / target_h
         
+        # MEMORY OPTIMIZATION: Limit original image size for processing
+        max_dimension = 2000  # Reduce if still OOM
+        if max(orig_w, orig_h) > max_dimension:
+            scale = max_dimension / max(orig_w, orig_h)
+            original = original.resize((int(orig_w * scale), int(orig_h * scale)), Image.Resampling.LANCZOS)
+            orig_w, orig_h = original.size
+            print(f"      → Resized input to {orig_w}x{orig_h} for memory")
+        
         # Simple fixed percentage: subject top must be at least X% down from top
         min_clear_zone = target_h * SUBJECT_MIN_TOP_PERCENT
         
@@ -147,18 +155,26 @@ class ThumbnailGenerator:
         # First, do a preliminary subject extraction on original to find the subject
         print("      → Analyzing subject position...")
         
-        # Scale down for faster rembg processing during analysis
-        analysis_scale = min(1.0, 1000 / max(orig_w, orig_h))
+        # MEMORY OPTIMIZATION: Scale down MORE aggressively for analysis (500px instead of 1000px)
+        analysis_scale = min(1.0, 500 / max(orig_w, orig_h))
         analysis_size = (int(orig_w * analysis_scale), int(orig_h * analysis_scale))
         analysis_img = original.resize(analysis_size, Image.Resampling.LANCZOS)
         analysis_subject = remove(analysis_img, session=self._get_rembg_session())
         
+        # Free memory immediately
+        del analysis_img
+        gc.collect()
+        
         bounds = self._get_subject_bounds(analysis_subject)
+        del analysis_subject
+        gc.collect()
         
         if bounds is None:
             # No subject detected, use center crop
             print("      → No subject detected, using center crop")
             base_img = ImageOps.fit(original, TARGET_SIZE, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+            del original
+            gc.collect()
             subject_layer = remove(base_img, session=self._get_rembg_session())
             return base_img, subject_layer
         
@@ -255,10 +271,16 @@ class ThumbnailGenerator:
         
         # Crop and resize to target
         cropped = working_img.crop((left, top, right, bottom))
+        del working_img
+        gc.collect()
+        
         base_img = cropped.resize(TARGET_SIZE, Image.Resampling.LANCZOS)
+        del cropped
+        gc.collect()
         
         # Extract subject from final result
         subject_layer = remove(base_img, session=self._get_rembg_session())
+        gc.collect()
         
         return base_img, subject_layer
 
@@ -358,11 +380,16 @@ class ThumbnailGenerator:
         if SMART_SUBJECT_POSITIONING:
             print("      → Smart subject positioning enabled")
             base_img, subject_layer = self._smart_crop_and_position(original, text)
+            del original  # Free memory
+            gc.collect()
         else:
             base_img = ImageOps.fit(original, TARGET_SIZE, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
+            del original  # Free memory
+            gc.collect()
             # 2. AI SUBJECT EXTRACTION
             print("[2/6] Extracting Subject (AI)...")
             subject_layer = remove(base_img, session=self._get_rembg_session())
+            gc.collect()
 
         # 3. BACKGROUND TEXTURE (Blur + Tint + Grain)
         print("[3/6] Creating Textured Background...")
@@ -372,9 +399,13 @@ class ThumbnailGenerator:
         dom_color = self._get_dominant_color(base_img)
         tint_layer = Image.new("RGBA", TARGET_SIZE, dom_color + (128,))
         bg_tinted = Image.alpha_composite(blurred_bg.convert("RGBA"), tint_layer)
+        del blurred_bg, tint_layer  # Free memory
+        gc.collect()
         
         # Add Grain
         bg_final = self._add_film_grain(bg_tinted)
+        del bg_tinted  # Free memory
+        gc.collect()
 
         # 4. TYPOGRAPHY ENGINE (Adjustable Stack)
         print("[4/6] Stacking Typography...")
