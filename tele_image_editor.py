@@ -357,7 +357,19 @@ if __name__ == '__main__':
     web_thread.start()
     logging.info("Keep-alive web server started in a background thread.")
     
-    # Step 2: Initialize and check for a job
+    # Step 2: Pre-load the rembg model BEFORE fetching jobs
+    # Using u2netp (4MB) instead of u2net (176MB) to reduce memory usage
+    logging.info("Pre-loading AI model (rembg u2netp - lightweight)...")
+    try:
+        from rembg import new_session
+        # This triggers the model download if not cached
+        session = new_session("u2netp")  # 4MB vs 176MB!
+        logging.info("✓ AI model loaded successfully!")
+    except Exception as e:
+        logging.error(f"Failed to pre-load AI model: {e}")
+        # Continue anyway - it will download during processing if needed
+    
+    # Step 3: Initialize directories and check for a job
     logging.info("Starting Image Editor Job Processor...")
     create_directories()
     initial_job = fetch_job_from_redis()
