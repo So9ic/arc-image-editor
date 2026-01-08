@@ -1,0 +1,8 @@
+flask
+waitress
+requests
+Pillow
+numpy
+scikit-learn
+rembg
+onnxruntime
