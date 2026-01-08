@@ -2,8 +2,9 @@ import os
 import sys
 import numpy as np
 from PIL import Image, ImageFilter, ImageEnhance, ImageDraw, ImageFont, ImageChops, ImageOps
-from rembg import remove
+from rembg import remove, new_session
 from sklearn.cluster import KMeans
+import gc  # For memory cleanup
 
 # ---------------------------------------------------------
 # CONFIGURATION & TUNING
@@ -11,7 +12,7 @@ from sklearn.cluster import KMeans
 
 # LOCAL TESTING ONLY - These are IGNORED when imported by tele_image_editor.py!
 # When running on Railway, the paths come from function arguments instead.
-INPUT_FILENAME = "inputt.jpg"      # Only used when running: python main.py
+INPUT_FILENAME = "input.jpg"      # Only used when running: python main.py
 OUTPUT_FILENAME = "viral_result.jpg"  # Only used when running: python main.py  
 TEXT_OVERLAY = "WINNER"            # Only used when running: python main.py
 
@@ -53,6 +54,17 @@ SMART_SUBJECT_POSITIONING = True   # Enable intelligent subject placement
 SUBJECT_MIN_TOP_PERCENT = 0.20     # Subject's top must be at least 30% down from top (0.30 = 30%)
 
 class ThumbnailGenerator:
+    # Use lighter model (u2netp: 4MB vs u2net: 176MB) - shared across instances
+    _rembg_session = None
+    
+    @classmethod
+    def _get_rembg_session(cls):
+        """Get or create shared rembg session with lightweight model."""
+        if cls._rembg_session is None:
+            print("      → Loading AI model (u2netp - lightweight)...")
+            cls._rembg_session = new_session("u2netp")  # 4MB vs 176MB!
+        return cls._rembg_session
+    
     def __init__(self):
         self.width, self.height = TARGET_SIZE
 
@@ -139,7 +151,7 @@ class ThumbnailGenerator:
         analysis_scale = min(1.0, 1000 / max(orig_w, orig_h))
         analysis_size = (int(orig_w * analysis_scale), int(orig_h * analysis_scale))
         analysis_img = original.resize(analysis_size, Image.Resampling.LANCZOS)
-        analysis_subject = remove(analysis_img)
+        analysis_subject = remove(analysis_img, session=self._get_rembg_session())
         
         bounds = self._get_subject_bounds(analysis_subject)
         
@@ -147,7 +159,7 @@ class ThumbnailGenerator:
             # No subject detected, use center crop
             print("      → No subject detected, using center crop")
             base_img = ImageOps.fit(original, TARGET_SIZE, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
-            subject_layer = remove(base_img)
+            subject_layer = remove(base_img, session=self._get_rembg_session())
             return base_img, subject_layer
         
         # Scale bounds back to original size
@@ -246,7 +258,7 @@ class ThumbnailGenerator:
         base_img = cropped.resize(TARGET_SIZE, Image.Resampling.LANCZOS)
         
         # Extract subject from final result
-        subject_layer = remove(base_img)
+        subject_layer = remove(base_img, session=self._get_rembg_session())
         
         return base_img, subject_layer
 
@@ -350,7 +362,7 @@ class ThumbnailGenerator:
             base_img = ImageOps.fit(original, TARGET_SIZE, method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
             # 2. AI SUBJECT EXTRACTION
             print("[2/6] Extracting Subject (AI)...")
-            subject_layer = remove(base_img)
+            subject_layer = remove(base_img, session=self._get_rembg_session())
 
         # 3. BACKGROUND TEXTURE (Blur + Tint + Grain)
         print("[3/6] Creating Textured Background...")
